@@ -2,12 +2,36 @@ import requests
 import time
 import json
 import io
-import pandas as pd
-from auth import auth_func
+
+# --- Authentication Function (Placeholder) ---
+# As requested, this is a placeholder for your actual authentication function.
+# It should return the base API URL and a valid authentication token.
+def auth_func():
+    """
+    Placeholder for your authentication function.
+    Replace this with your actual implementation that retrieves
+    the API base URL and a valid token.
+    """
+    # Example values - replace with your actual configuration
+    base_api_url = "https://api2.prismacloud.io"
+    auth_token = "your-prisma-cloud-auth-token" # Replace with a real token or token retrieval logic
+    return base_api_url, auth_token
 
 # --- Main Logic ---
 
 def submit_and_download_csv(base_url, headers, alert_filter_payload):
+    """
+    Submits a job to generate an alert CSV, polls for completion,
+    and downloads the resulting data as a string.
+
+    Args:
+        base_url (str): The base URL for the Prisma Cloud API.
+        headers (dict): The request headers, including the auth token.
+        alert_filter_payload (dict): The filter payload for the alert CSV job.
+
+    Returns:
+        str: A string containing the CSV data, or None on failure.
+    """
     session = requests.Session()
     session.headers.update(headers)
 
@@ -72,23 +96,15 @@ def submit_and_download_csv(base_url, headers, alert_filter_payload):
     try:
         response = session.get(download_url)
         response.raise_for_status()
-        # Use pandas to read the CSV content directly from the response text
-        # This keeps the entire process in memory
         csv_data = response.text
         if not csv_data:
             print("Warning: Downloaded CSV is empty.")
-            return pd.DataFrame() # Return an empty DataFrame
+            return "" # Return an empty string for empty files
         
-        # Use io.StringIO to treat the string data as a file
-        csv_file = io.StringIO(csv_data)
-        df = pd.read_csv(csv_file)
-        print(f"Successfully downloaded and parsed CSV. Found {len(df)} rows.")
-        return df
+        print(f"Successfully downloaded CSV data.")
+        return csv_data
     except requests.exceptions.RequestException as e:
         print(f"Error downloading CSV: {e}")
-        return None
-    except pd.errors.ParserError as e:
-        print(f"Error parsing CSV data with pandas: {e}")
         return None
 
 
@@ -97,7 +113,7 @@ def main():
     Main function to orchestrate the download and combination of CSVs.
     """
     try:
-        token, base_api_url = auth_func()
+        base_api_url, token = auth_func()
     except Exception as e:
         print(f"An error occurred in the authentication function: {e}")
         return
@@ -132,29 +148,46 @@ def main():
 
     # --- Process both filters ---
     print("--- Starting process for Filter 1 (Critical Alerts) ---")
-    df1 = submit_and_download_csv(base_api_url, headers, filter_1)
+    csv_1_str = submit_and_download_csv(base_api_url, headers, filter_1)
 
     print("\n--- Starting process for Filter 2 (High Alerts) ---")
-    df2 = submit_and_download_csv(base_api_url, headers, filter_2)
+    csv_2_str = submit_and_download_csv(base_api_url, headers, filter_2)
 
     # --- Combine the CSV outputs ---
-    dataframes_to_combine = []
-    if df1 is not None and not df1.empty:
-        dataframes_to_combine.append(df1)
-    if df2 is not None and not df2.empty:
-        dataframes_to_combine.append(df2)
+    
+    # Collect all non-empty CSV strings
+    all_csvs = []
+    if csv_1_str:
+        all_csvs.append(csv_1_str)
+    if csv_2_str:
+        all_csvs.append(csv_2_str)
 
-    if not dataframes_to_combine:
+    if not all_csvs:
         print("\nNo data was downloaded. Exiting.")
         return
 
     print("\nCombining downloaded CSV data...")
-    # Use pd.concat to merge the DataFrames.
-    # ignore_index=True resets the index of the combined DataFrame.
-    combined_df = pd.concat(dataframes_to_combine, ignore_index=True)
 
-    print(f"Successfully combined data. Total rows: {len(combined_df)}")
+    # Take the header from the first CSV and all its data rows
+    first_csv_lines = all_csvs[0].strip().split('\n')
+    header = first_csv_lines[0]
+    combined_rows = first_csv_lines[1:] # Get data rows from the first file
+
+    # For subsequent CSVs, skip the header and append only the data rows
+    for csv_str in all_csvs[1:]:
+        lines = csv_str.strip().split('\n')
+        combined_rows.extend(lines[1:])
+
+    # Reconstruct the final CSV string
+    final_csv_output = header + '\n' + '\n'.join(combined_rows)
     
+    print(f"Successfully combined data. Total rows (excluding header): {len(combined_rows)}")
+    
+    # The 'final_csv_output' variable now holds the final, merged CSV as a single string.
+    # You can now proceed with your SharePoint upload logic using this variable.
+    print("\nFinal combined CSV string is ready for SharePoint upload.")
+    # print(final_csv_output[:1000]) # Print first 1000 characters as a sample
+
 
 if __name__ == "__main__":
     main()
